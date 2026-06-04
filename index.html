@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Dash Duel — souboj dvou hráčů</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game-wrap">
+    <canvas id="game"></canvas>
+
+    <!-- Skóre a ovládání nahoře/dole -->
+    <div class="hud hud-top" id="hud-top">
+      <span class="hud-name">HRÁČ&nbsp;1</span>
+      <span class="hud-score" id="score-top">0</span>
+      <span class="hud-key">klávesa&nbsp;W&nbsp;/&nbsp;klikni nahoře</span>
+    </div>
+    <div class="hud hud-bottom" id="hud-bottom">
+      <span class="hud-name">HRÁČ&nbsp;2</span>
+      <span class="hud-score" id="score-bottom">0</span>
+      <span class="hud-key">šipka&nbsp;↑&nbsp;/&nbsp;klikni dole</span>
+    </div>
+
+    <!-- Překryvná obrazovka (start / konec) -->
+    <div class="overlay" id="overlay">
+      <h1 class="title">DASH&nbsp;DUEL</h1>
+      <p class="subtitle" id="overlay-text">Kdo vydrží déle, vyhrává.</p>
+      <div class="hint" id="overlay-hint">Stiskni <b>MEZERNÍK</b> nebo klepni pro start</div>
+      <div class="controls-legend">
+        <div><span class="badge p1">HRÁČ 1</span> klávesa <b>W</b> &nbsp;·&nbsp; horní polovina obrazovky</div>
+        <div><span class="badge p2">HRÁČ 2</span> šipka <b>↑</b> &nbsp;·&nbsp; dolní polovina obrazovky</div>
+      </div>
+    </div>
+
+    <!-- Odpočet před startem -->
+    <div class="countdown" id="countdown"></div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
