@@ -10,30 +10,59 @@
   <div id="game-wrap">
     <canvas id="game"></canvas>
 
-    <!-- Skóre a ovládání nahoře/dole -->
+    <!-- Skóre nahoře/dole -->
     <div class="hud hud-top" id="hud-top">
-      <span class="hud-name">HRÁČ&nbsp;1</span>
+      <span class="hud-name" id="name-top">HRÁČ&nbsp;1</span>
       <span class="hud-score" id="score-top">0</span>
-      <span class="hud-key">klávesa&nbsp;W&nbsp;/&nbsp;klikni nahoře</span>
+      <span class="hud-key" id="key-top">klávesa&nbsp;W</span>
     </div>
     <div class="hud hud-bottom" id="hud-bottom">
-      <span class="hud-name">HRÁČ&nbsp;2</span>
+      <span class="hud-name" id="name-bottom">HRÁČ&nbsp;2</span>
       <span class="hud-score" id="score-bottom">0</span>
-      <span class="hud-key">šipka&nbsp;↑&nbsp;/&nbsp;klikni dole</span>
+      <span class="hud-key" id="key-bottom">šipka&nbsp;↑</span>
     </div>
 
-    <!-- Překryvná obrazovka (start / konec) -->
-    <div class="overlay" id="overlay">
+    <!-- ====== HLAVNÍ MENU ====== -->
+    <section class="screen" id="screen-menu">
       <h1 class="title">DASH&nbsp;DUEL</h1>
-      <p class="subtitle" id="overlay-text">Kdo vydrží déle, vyhrává.</p>
-      <div class="hint" id="overlay-hint">Stiskni <b>MEZERNÍK</b> nebo klepni pro start</div>
-      <div class="controls-legend">
-        <div><span class="badge p1">HRÁČ 1</span> klávesa <b>W</b> &nbsp;·&nbsp; horní polovina obrazovky</div>
-        <div><span class="badge p2">HRÁČ 2</span> šipka <b>↑</b> &nbsp;·&nbsp; dolní polovina obrazovky</div>
+      <p class="subtitle">Kdo vydrží déle, vyhrává.</p>
+      <div class="menu-buttons">
+        <button class="btn" data-act="local">🎮&nbsp; Hra na jednom zařízení<small>dva hráči, jedna klávesnice</small></button>
+        <button class="btn" data-act="host">🌐&nbsp; Začít novou hru online<small>vygeneruje se kód pro spoluhráče</small></button>
+        <button class="btn btn-ghost" data-act="join">🔑&nbsp; Připojit se k existující hře<small>zadej kód od spoluhráče</small></button>
       </div>
+    </section>
+
+    <!-- ====== HOSTITEL: čekání ====== -->
+    <section class="screen hidden" id="screen-host">
+      <h2 class="screen-title">Tvůj kód hry</h2>
+      <div class="code-box" id="host-code">······</div>
+      <p class="screen-text">Řekni tento kód druhému hráči. Až ho zadá na svém zařízení, hra začne.</p>
+      <p class="status" id="host-status">⏳ Čekání na druhého hráče…</p>
+      <button class="btn btn-ghost small" data-act="back">← Zpět do menu</button>
+    </section>
+
+    <!-- ====== PŘIPOJENÍ: zadání kódu ====== -->
+    <section class="screen hidden" id="screen-join">
+      <h2 class="screen-title">Připojit se ke hře</h2>
+      <p class="screen-text">Zadej kód, který ti řekl spoluhráč.</p>
+      <input class="code-input" id="join-code" maxlength="6" autocomplete="off"
+             autocapitalize="characters" spellcheck="false" placeholder="ABCD12" />
+      <p class="error" id="join-error"></p>
+      <div class="row">
+        <button class="btn small" data-act="connect">Připojit se</button>
+        <button class="btn btn-ghost small" data-act="back">← Zpět</button>
+      </div>
+    </section>
+
+    <!-- ====== Herní překryv (start / konec) ====== -->
+    <div class="overlay hidden" id="overlay">
+      <p class="subtitle" id="overlay-text"></p>
+      <div class="hint" id="overlay-hint"></div>
+      <button class="btn btn-ghost small overlay-menu" data-act="back">← Menu</button>
     </div>
 
-    <!-- Odpočet před startem -->
+    <!-- ====== Odpočet ====== -->
     <div class="countdown" id="countdown"></div>
   </div>
 

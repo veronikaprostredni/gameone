@@ -1,0 +1,11 @@
+{
+  "name": "dash-duel",
+  "version": "1.0.0",
+  "description": "Lokální i online souboj dvou hráčů ve stylu Geometry Dash.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
