@@ -36,7 +36,7 @@ html, body {
   pointer-events: none;
   z-index: 5;
 }
-.hud-top    { top: 0;    color: var(--p1-glow); }
+.hud-top    { top: 0;    color: var(--p1-glow); padding-right: 60px; }
 .hud-bottom { bottom: 0; color: var(--p2-glow); flex-direction: row-reverse; }
 
 .hud-name  { font-size: 15px; opacity: 0.9; }
@@ -164,6 +164,47 @@ html, body {
 @keyframes pulse {
   0%, 100% { transform: scale(1);    box-shadow: 0 0 0 rgba(255,255,255,0); }
   50%      { transform: scale(1.05); box-shadow: 0 0 26px rgba(255,255,255,0.22); }
+}
+
+/* ---------- Tlačítko zvuku ---------- */
+#mute-btn {
+  position: absolute;
+  top: 8px; right: 10px;
+  z-index: 20;
+  width: 42px; height: 42px;
+  font-size: 20px;
+  line-height: 1;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.2);
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+#mute-btn:hover { background: rgba(255,255,255,0.2); }
+#mute-btn:active { transform: scale(0.92); }
+
+/* ---------- Nápis úrovně ---------- */
+.banner {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(28px, 6vw, 56px);
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 0 30px rgba(255,255,255,0.7);
+  pointer-events: none;
+  z-index: 7;
+  opacity: 0;
+}
+.banner.show { animation: banner-pop 1.1s ease-out; }
+@keyframes banner-pop {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(1.6); }
+  20%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  75%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
 }
 
 /* ---------- Odpočet ---------- */

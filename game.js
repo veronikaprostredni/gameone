@@ -1,15 +1,16 @@
 /* =========================================================================
    DASH DUEL — souboj dvou hráčů ve stylu Geometry Dash
-   - Hra na jednom zařízení (2 hráči) NEBO online na dvou zařízeních (přes kód)
+   - Hra na jednom zařízení (2 hráči) NEBO online na dvou zařízeních
+   - Online přes PeerJS (WebRTC) → propojení napřímo, BEZ vlastního serveru
+     (funguje i na statickém hostingu typu GitHub Pages)
    - Oba hráči stojí "pravou stranou nahoru" a skáčou NAHORU
-   - Překážky jsou pro oba stejné (deterministické dle semínka) → férový závod
-   - Obtížnost roste s ujetou vzdáleností (rychlost i hustota), běh není nekonečný
+   - Stejné překážky i mince pro oba (deterministické dle semínka) → férový závod
+   - Obtížnost roste s ujetou vzdáleností; úrovně, zvuky, mince, otřesy, efekty
    ========================================================================= */
 
 (() => {
   'use strict';
 
-  // ----- Plátno -----
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
@@ -21,6 +22,8 @@
   const overlayText = document.getElementById('overlay-text');
   const overlayHint = document.getElementById('overlay-hint');
   const countdownEl = document.getElementById('countdown');
+  const bannerEl    = document.getElementById('banner');
+  const muteBtn     = document.getElementById('mute-btn');
   const hostCodeEl  = document.getElementById('host-code');
   const hostStatus  = document.getElementById('host-status');
   const joinInput   = document.getElementById('join-code');
@@ -35,17 +38,21 @@
   const keyBotEl    = document.getElementById('key-bottom');
 
   // ----- Konstanty -----
-  const GRAVITY      = 2600;   // px/s^2 (míří dolů u obou hráčů)
-  const JUMP_V       = 900;    // počáteční rychlost skoku
-  const GROUND_H     = 54;     // tloušťka podlahy
+  const GRAVITY      = 2600;
+  const JUMP_V       = 900;
+  const GROUND_H     = 54;
   const PLAYER_SIZE  = 38;
   const PLAYER_X_FR  = 0.20;
   const START_SPEED  = 340;
-  const MAX_SPEED    = 820;
-  const SPEED_BYDIST = 0.042;  // přírůstek rychlosti na 1 px vzdálenosti
+  const MAX_SPEED    = 860;
+  const SPEED_BYDIST = 0.044;
   const SPIKE_W      = 34;
   const SPIKE_H      = 42;
-  const NET_HZ       = 0.04;   // jak často posílat stav po síti (s)
+  const COIN_R       = 12;
+  const COIN_VALUE   = 15;
+  const LEVEL_DIST   = 2200;        // délka jedné "úrovně" (m*20)
+  const NET_HZ       = 0.04;
+  const PEER_PREFIX  = 'dashduel-r1-';
   const COLORS = {
     p1: { core: '#ff3cac', glow: '#ff6ec7' },
     p2: { core: '#2af5ff', glow: '#6efff0' },
@@ -53,28 +60,28 @@
 
   // ----- Stav -----
   let W = 0, H = 0, dpr = 1;
-  let mode = null;              // 'local' | 'online'
-  let state = 'menu';          // 'menu' | 'ready' | 'countdown' | 'playing' | 'over'
+  let mode = null;                  // 'local' | 'online'
+  let state = 'menu';
   let lanes = [];
-  let field = null;            // deterministický generátor překážek
+  let field = null;
   let particles = [];
-  let bgScroll = 0;
-  let lastTime = 0;
+  let bgScroll = 0, lastTime = 0;
   let countdownTimer = 0, countdownNum = 0;
+  let gameLevel = 0, lastLevel = 0;
+  let shakeMag = 0, shakeT = 0;
 
   // online
-  let net = null;
-  let role = null;             // 'host' | 'guest'
-  let localIdx = 1, remoteIdx = 0;   // při online jsi vždy dole
-  let netAcc = 0;
-  let remoteTarget = null;
+  let peer = null, conn = null, role = null;
+  let localIdx = 1, remoteIdx = 0;
+  let netAcc = 0, remoteTarget = null;
+  let rematchLocal = false, rematchRemote = false;
+  let hostTries = 0;
 
   // ----- Pomůcky -----
   const rand  = (a, b) => a + Math.random() * (b - a);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const lerp  = (a, b, t) => a + (b - a) * t;
 
-  // Seedovatelný generátor (mulberry32) — stejné semínko = stejné překážky
   function mulberry32(a) {
     return function () {
       a |= 0; a = (a + 0x6D2B79F5) | 0;
@@ -83,8 +90,96 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+  const randSeed = () => (Math.random() * 2147483647) | 0;
+  function genCode() {
+    const L = 'ABCDEFGHJKLMNPQRSTUVWXYZ', D = '23456789';
+    let c = '';
+    for (let i = 0; i < 4; i++) c += L[Math.floor(Math.random() * L.length)];
+    for (let i = 0; i < 2; i++) c += D[Math.floor(Math.random() * D.length)];
+    return c;
+  }
 
-  // ===== Rozvržení =====
+  /* =======================================================================
+     ZVUKY (WebAudio — generované, žádné soubory)
+     ===================================================================== */
+  let actx = null, muted = false, musicTimer = null, musicStep = 0, nextNote = 0;
+  function ensureAudio() {
+    if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) {} }
+    if (actx && actx.state === 'suspended') actx.resume();
+  }
+  function tone(freq, dur, type, vol, when) {
+    if (!actx || muted) return;
+    const t = actx.currentTime + (when || 0);
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type || 'square'; o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function slide(f1, f2, dur, type, vol) {
+    if (!actx || muted) return;
+    const t = actx.currentTime;
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type || 'sawtooth';
+    o.frequency.setValueAtTime(f1, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20, f2), t + dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function noise(dur, vol) {
+    if (!actx || muted) return;
+    const n = Math.floor(actx.sampleRate * dur);
+    const buf = actx.createBuffer(1, n, actx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = actx.createBufferSource(); src.buffer = buf;
+    const g = actx.createGain(); g.gain.value = vol;
+    src.connect(g).connect(actx.destination); src.start();
+  }
+  const sfx = {
+    jump()  { tone(540, 0.10, 'square', 0.16); },
+    land()  { tone(150, 0.06, 'sine', 0.10); },
+    coin()  { tone(880, 0.05, 'square', 0.14); tone(1320, 0.09, 'square', 0.14, 0.05); },
+    crash() { slide(420, 60, 0.45, 'sawtooth', 0.22); noise(0.4, 0.18); },
+    count() { tone(440, 0.10, 'square', 0.18); },
+    go()    { tone(660, 0.12, 'square', 0.2); tone(990, 0.22, 'square', 0.2, 0.1); },
+    level() { [0,1,2].forEach(i => tone(660 * Math.pow(2, i/12*4), 0.10, 'square', 0.16, i*0.06)); },
+    win()   { [0,4,7,12].forEach((s,i) => tone(523 * Math.pow(2, s/12), 0.16, 'square', 0.18, i*0.1)); },
+    lose()  { slide(330, 120, 0.5, 'triangle', 0.18); },
+  };
+  // jemná hudba na pozadí
+  const SCALE = [0, 3, 5, 7, 10];
+  const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
+  function scheduleMusic() {
+    if (!actx) return;
+    while (nextNote < actx.currentTime + 0.18) {
+      const lvl = Math.min(8, gameLevel);
+      const root = 45 + (lvl % 3) * 2;
+      const off = nextNote - actx.currentTime;
+      if (musicStep % 4 === 0) tone(midi(root - 12), 0.20, 'triangle', 0.05, off);
+      const note = root + 12 + SCALE[(musicStep * 3) % SCALE.length] + ((Math.floor(musicStep / 8) % 2) ? 12 : 0);
+      tone(midi(note), 0.12, 'square', 0.032, off);
+      nextNote += Math.max(0.10, 0.16 - lvl * 0.006);
+      musicStep++;
+    }
+  }
+  function startMusic() {
+    if (!actx) return;
+    musicStep = 0; nextNote = actx.currentTime + 0.05;
+    if (musicTimer) clearInterval(musicTimer);
+    musicTimer = setInterval(scheduleMusic, 60);
+  }
+  function stopMusic() { if (musicTimer) { clearInterval(musicTimer); musicTimer = null; } }
+  function setMuted(m) {
+    muted = m;
+    muteBtn.textContent = m ? '🔇' : '🔊';
+  }
+
+  /* =======================================================================
+     ROZVRŽENÍ A DRÁHY
+     ===================================================================== */
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     W = window.innerWidth; H = window.innerHeight;
@@ -96,109 +191,114 @@
     buildLanes(true);
   }
 
-  // ===== Dráhy obou hráčů (oba gravitace dolů, oba skáčou nahoru) =====
   function buildLanes(preserve) {
     const mid = H / 2;
     const px = Math.round(W * PLAYER_X_FR);
-
-    // Horní hráč: jeho podlaha je u STŘEDU, skáče vzhůru do horní poloviny.
-    const topGround = mid - GROUND_H;
     const top = {
       id: 'p1', colors: COLORS.p1,
-      groundY: topGround,
-      restY: topGround - PLAYER_SIZE,
-      regionTop: 0, regionBottom: mid,
-      x: px,
+      groundY: mid - GROUND_H, restY: mid - GROUND_H - PLAYER_SIZE,
+      regionTop: 0, regionBottom: mid, x: px,
     };
-    // Dolní hráč: podlaha u DNA, skáče vzhůru ke středu.
-    const botGround = H - GROUND_H;
     const bottom = {
       id: 'p2', colors: COLORS.p2,
-      groundY: botGround,
-      restY: botGround - PLAYER_SIZE,
-      regionTop: mid, regionBottom: H,
-      x: px,
+      groundY: H - GROUND_H, restY: H - GROUND_H - PLAYER_SIZE,
+      regionTop: mid, regionBottom: H, x: px,
     };
-
     const keep = preserve && lanes.length === 2;
     [top, bottom].forEach((lane, i) => {
       const old = keep ? lanes[i] : null;
       lane.vy        = old ? old.vy        : 0;
       lane.onGround  = old ? old.onGround  : true;
       lane.alive     = old ? old.alive     : true;
+      lane.bonus     = old ? old.bonus     : 0;
       lane.score     = old ? old.score     : 0;
       lane.rot       = old ? old.rot       : 0;
       lane.worldDist = old ? old.worldDist : 0;
       lane.trailAcc  = old ? old.trailAcc  : 0;
+      lane.coinsGot  = old ? old.coinsGot  : new Set();
       lane.y         = old ? old.y         : lane.restY;
     });
     lanes = [top, bottom];
   }
 
-  // ===== Deterministické pole překážek =====
+  // Deterministické pole překážek + mincí
   function makeField(seed) {
     return {
       prng: mulberry32(seed >>> 0),
-      groups: [],
-      lastX: 700,                       // první překážka až po rozjezdu
+      groups: [], coins: [], lastX: 700,
       ensure(untilX) {
         while (this.lastX < untilX) {
+          const prevEnd = this.lastX;
           const dist = this.lastX;
-          const diff = Math.min(1, dist / 7000);            // 0..1 obtížnost
+          const diff = Math.min(1, dist / 7000);
           const sp = Math.min(MAX_SPEED, START_SPEED + dist * SPEED_BYDIST);
           const airTime = (2 * JUMP_V) / GRAVITY;
-          const minGap = sp * airTime * 1.04;               // aby šlo doskočit
-          const extra = (1 - diff) * 300 + 40;              // mezery se zkracují
+          const minGap = sp * airTime * 1.04;
+          const extra = (1 - diff) * 300 + 40;
           const gap = minGap + this.prng() * extra + 24;
+          const x = this.lastX + gap;
 
           const r = this.prng();
           let count = 1;
           if (dist > 1400 && r < 0.22 + diff * 0.40) count = 2;
           if (dist > 3600 && r < 0.10 + diff * 0.26) count = 3;
+          const tall = this.prng() < 0.16 && dist > 2000;
+          const h = tall ? SPIKE_H * 1.5 : SPIKE_H;
+          this.groups.push({ x, count, h });
 
-          const x = this.lastX + gap;
-          this.groups.push({ x, count });
+          // mince v mezeře před skupinou
+          if (this.prng() < 0.55) {
+            const cx = (prevEnd + x) / 2;
+            const floating = this.prng() < 0.5;
+            this.coins.push({ x: cx, h: floating ? 90 : 0 });
+          }
           this.lastX = x + count * SPIKE_W;
         }
       },
     };
   }
 
-  // ===== Start kola =====
-  function startGame(newMode, seed) {
+  /* =======================================================================
+     PRŮBĚH HRY
+     ===================================================================== */
+  function startGame(newMode, seed, roleArg) {
+    ensureAudio();
     mode = newMode;
-    field = makeField(seed != null ? seed : (Math.random() * 2147483647) | 0);
+    if (roleArg) role = roleArg;
+    field = makeField(seed != null ? seed : randSeed());
     particles = [];
+    gameLevel = 0; lastLevel = 0; shakeMag = 0; shakeT = 0;
     buildLanes(false);
     if (mode === 'online') { localIdx = 1; remoteIdx = 0; remoteTarget = null; netAcc = 0; }
+    rematchLocal = rematchRemote = false;
     setHud();
     hideAllScreens();
     showHud(true);
     startCountdown();
   }
 
-  function curSpeed(lane) {
-    return Math.min(MAX_SPEED, START_SPEED + lane.worldDist * SPEED_BYDIST);
-  }
+  const curSpeed = (lane) => Math.min(MAX_SPEED, START_SPEED + lane.worldDist * SPEED_BYDIST);
+  const ctrlLane = () => lanes[mode === 'online' ? localIdx : 0];
 
-  // ===== Skok =====
   function jump(idx) {
     if (state !== 'playing') return;
     const lane = lanes[idx];
     if (lane.alive && lane.onGround) {
-      lane.vy = -JUMP_V;
-      lane.onGround = false;
-      spawnPuff(lane, true);
+      lane.vy = -JUMP_V; lane.onGround = false;
+      spawnPuff(lane, true); sfx.jump();
     }
   }
 
-  // ===== Aktualizace =====
   function update(dt) {
     if (state !== 'playing') return;
 
     const maxCam = Math.max(lanes[0].worldDist, lanes[1].worldDist);
     field.ensure(maxCam + W + 240);
-    bgScroll = (bgScroll + curSpeed(lanes[localIndexForBg()]) * dt * 0.35) % 80;
+    bgScroll = (bgScroll + curSpeed(ctrlLane()) * dt * 0.35) % 80;
+
+    // úroveň podle ovládané dráhy
+    gameLevel = Math.floor(ctrlLane().worldDist / LEVEL_DIST);
+    if (gameLevel > lastLevel) { lastLevel = gameLevel; onLevelUp(); }
 
     lanes.forEach((lane, i) => {
       if (mode === 'online' && i === remoteIdx) { updateRemote(lane, dt); return; }
@@ -206,159 +306,179 @@
 
       const sp = curSpeed(lane);
       lane.worldDist += sp * dt;
-      lane.score = lane.worldDist * 0.05;
+      lane.score = lane.worldDist * 0.05 + lane.bonus;
 
-      // Fyzika — gravitace dolů, skok nahoru
       lane.vy += GRAVITY * dt;
       lane.y += lane.vy * dt;
-
-      if (lane.y >= lane.restY) {            // dopad na podlahu
+      if (lane.y >= lane.restY) {
         lane.y = lane.restY; lane.vy = 0;
-        if (!lane.onGround) { lane.onGround = true; lane.rot = 0; spawnPuff(lane, false); }
+        if (!lane.onGround) { lane.onGround = true; lane.rot = 0; spawnPuff(lane, false); sfx.land(); }
       } else {
-        lane.onGround = false;
-        lane.rot += 7.2 * dt;                // rotace kostky ve vzduchu
+        lane.onGround = false; lane.rot += 7.2 * dt;
       }
 
-      // Stopa
       lane.trailAcc += dt;
       if (lane.trailAcc > 0.02) { lane.trailAcc = 0; spawnTrail(lane); }
 
+      collectCoins(lane);
       if (collide(lane)) killLane(lane);
     });
 
-    // Síťový stav
-    if (mode === 'online') {
-      netAcc += dt;
-      if (netAcc >= NET_HZ) { netAcc = 0; sendState(); }
-    }
+    if (mode === 'online') { netAcc += dt; if (netAcc >= NET_HZ) { netAcc = 0; sendState(); } }
+
+    if (shakeT > 0) { shakeT -= dt; shakeMag *= Math.pow(0.001, dt); if (shakeT <= 0) shakeMag = 0; }
 
     updateScores();
     checkEnd();
   }
 
-  function localIndexForBg() { return mode === 'online' ? localIdx : 0; }
-
-  // ===== Kolize hráče s bodci =====
   function collide(lane) {
     const hb = 5;
     const pL = lane.x + hb, pR = lane.x + PLAYER_SIZE - hb;
     const pT = lane.y + hb, pB = lane.y + PLAYER_SIZE - hb;
     const cam = lane.worldDist;
     for (const g of field.groups) {
-      const gx = g.x - cam;                  // pozice skupiny na obrazovce
+      const gx = g.x - cam;
       if (gx + g.count * SPIKE_W < lane.x - 40) continue;
       if (gx > lane.x + PLAYER_SIZE + 40) break;
+      const h = g.h || SPIKE_H;
       for (let k = 0; k < g.count; k++) {
         const ox = gx + k * SPIKE_W;
         const oL = ox + 4, oR = ox + SPIKE_W - 4;
-        const oT = lane.groundY - SPIKE_H, oB = lane.groundY;
+        const oT = lane.groundY - h, oB = lane.groundY;
         if (pR > oL && pL < oR && pB > oT && pT < oB) return true;
       }
     }
     return false;
   }
 
+  function collectCoins(lane) {
+    const cam = lane.worldDist;
+    const px = lane.x + PLAYER_SIZE / 2, py = lane.y + PLAYER_SIZE / 2;
+    for (let idx = 0; idx < field.coins.length; idx++) {
+      const c = field.coins[idx];
+      const cx = c.x - cam;
+      if (cx < lane.x - 60) continue;
+      if (cx > lane.x + PLAYER_SIZE + 60) break;
+      if (lane.coinsGot.has(idx)) continue;
+      const cy = lane.groundY - c.h - COIN_R - 6;
+      if (Math.abs(px - cx) < COIN_R + PLAYER_SIZE / 2 && Math.abs(py - cy) < COIN_R + PLAYER_SIZE / 2) {
+        lane.coinsGot.add(idx);
+        lane.bonus += COIN_VALUE;
+        sfx.coin();
+        spawnCoinBurst(cx, cy, lane);
+      }
+    }
+  }
+
   function killLane(lane) {
     if (!lane.alive) return;
     lane.alive = false;
     spawnExplosion(lane);
+    sfx.crash();
+    if (mode === 'local' || lane === lanes[localIdx]) { shakeMag = 16; shakeT = 0.4; }
   }
 
-  // ===== Online: vzdálený hráč =====
+  function onLevelUp() {
+    showBanner(`ÚROVEŇ ${gameLevel + 1}`);
+    sfx.level();
+  }
+
   function updateRemote(lane, dt) {
     if (!remoteTarget) return;
     const t = clamp(dt * 14, 0, 1);
     lane.y = lerp(lane.y, remoteTarget.y, t);
     lane.worldDist = lerp(lane.worldDist, remoteTarget.worldDist, t);
-    lane.rot = remoteTarget.rot;
-    lane.alive = remoteTarget.alive;
-    lane.score = remoteTarget.score;
+    lane.rot = remoteTarget.rot; lane.alive = remoteTarget.alive; lane.score = remoteTarget.score;
   }
-
   function sendState() {
     const me = lanes[localIdx];
     netSend({ t: 'state', s: [
-      Math.round(me.y), Math.round(me.worldDist),
-      me.alive ? 1 : 0, Math.round(me.score),
-      Math.round(me.rot * 100) / 100,
+      Math.round(me.y), Math.round(me.worldDist), me.alive ? 1 : 0,
+      Math.round(me.score), Math.round(me.rot * 100) / 100,
     ]});
   }
 
-  // ===== Konec kola =====
-  function checkEnd() {
-    const bothDead = !lanes[0].alive && !lanes[1].alive;
-    if (bothDead) endGame();
-  }
+  function checkEnd() { if (!lanes[0].alive && !lanes[1].alive) endGame(); }
 
   function endGame() {
     state = 'over';
-    const s1 = Math.floor(lanes[0].score);
-    const s2 = Math.floor(lanes[1].score);
-    let msg;
+    stopMusic();
+    const s1 = Math.floor(lanes[0].score), s2 = Math.floor(lanes[1].score);
+    let msg, won = false;
     if (mode === 'online') {
-      const meScore = Math.floor(lanes[localIdx].score);
-      const opScore = Math.floor(lanes[remoteIdx].score);
-      if (meScore === opScore) msg = `Remíza! Oba ${meScore} m.`;
-      else if (meScore > opScore) msg = `🏆 Vyhrál jsi! ${meScore} m vs ${opScore} m`;
-      else msg = `Prohrál jsi… ${meScore} m vs ${opScore} m`;
-      overlayHint.innerHTML = 'Stiskni <b>MEZERNÍK</b> pro odvetu';
+      const me = Math.floor(lanes[localIdx].score), op = Math.floor(lanes[remoteIdx].score);
+      if (me === op) msg = `Remíza! Oba ${me} m.`;
+      else if (me > op) { msg = `🏆 Vyhrál jsi! ${me} m vs ${op} m`; won = true; }
+      else msg = `Prohrál jsi… ${me} m vs ${op} m`;
     } else {
       if (s1 === s2) msg = `Remíza! Oba ${s1} m.`;
-      else if (s1 > s2) msg = `🏆 Vyhrál HRÁČ 1 — ${s1} m vs ${s2} m`;
-      else msg = `🏆 Vyhrál HRÁČ 2 — ${s2} m vs ${s1} m`;
-      overlayHint.innerHTML = 'Stiskni <b>MEZERNÍK</b> pro odvetu';
+      else if (s1 > s2) { msg = `🏆 Vyhrál HRÁČ 1 — ${s1} m vs ${s2} m`; won = true; }
+      else { msg = `🏆 Vyhrál HRÁČ 2 — ${s2} m vs ${s1} m`; won = true; }
     }
+    won ? sfx.win() : sfx.lose();
+    overlayHint.innerHTML = 'Stiskni <b>MEZERNÍK</b> pro odvetu';
     overlayText.textContent = msg;
     show(overlay, true);
   }
 
-  // ===== Částice =====
+  /* =======================================================================
+     ČÁSTICE
+     ===================================================================== */
   const laneCY = (lane) => lane.y + PLAYER_SIZE / 2;
-
   function spawnExplosion(lane) {
     const cx = lane.x + PLAYER_SIZE / 2, cy = laneCY(lane);
-    for (let i = 0; i < 40; i++) {
-      const a = rand(0, Math.PI * 2), sp = rand(80, 480);
+    for (let i = 0; i < 44; i++) {
+      const a = rand(0, Math.PI * 2), sp = rand(80, 500);
       particles.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-        life: rand(0.5, 1.1), max: 1.1, size: rand(3, 8),
+        life: rand(0.5, 1.2), max: 1.2, size: rand(3, 9),
         color: Math.random() < 0.5 ? lane.colors.core : lane.colors.glow, grav: 700 });
     }
   }
   function spawnPuff(lane, isJump) {
     const cx = lane.x + PLAYER_SIZE / 2, cy = lane.restY + PLAYER_SIZE;
     const n = isJump ? 8 : 10;
-    for (let i = 0; i < n; i++) {
-      particles.push({ x: cx + rand(-12, 12), y: cy,
-        vx: rand(-150, 150), vy: rand(-40, 10),
-        life: 0.4, max: 0.4, size: rand(2, 5),
-        color: isJump ? lane.colors.glow : '#ffffff', grav: 400 });
-    }
+    for (let i = 0; i < n; i++)
+      particles.push({ x: cx + rand(-12, 12), y: cy, vx: rand(-150, 150), vy: rand(-40, 10),
+        life: 0.4, max: 0.4, size: rand(2, 5), color: isJump ? lane.colors.glow : '#fff', grav: 400 });
   }
   function spawnTrail(lane) {
     particles.push({ x: lane.x + PLAYER_SIZE * 0.2, y: laneCY(lane) + rand(-6, 6),
-      vx: -curSpeed(lane) * 0.25, vy: rand(-20, 20),
-      life: 0.5, max: 0.5, size: rand(3, 7), color: lane.colors.core, grav: 0, glow: true });
+      vx: -curSpeed(lane) * 0.25, vy: rand(-20, 20), life: 0.5, max: 0.5,
+      size: rand(3, 7), color: lane.colors.core, grav: 0, glow: true });
+  }
+  function spawnCoinBurst(x, y, lane) {
+    for (let i = 0; i < 12; i++) {
+      const a = rand(0, Math.PI * 2), sp = rand(60, 220);
+      particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 0.5, max: 0.5, size: rand(2, 5), color: '#ffe14d', grav: 200, glow: true });
+    }
   }
   function updateParticles(dt) {
     for (const p of particles) { p.vy += (p.grav || 0) * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
     particles = particles.filter(p => p.life > 0);
   }
 
-  // ===== Vykreslení =====
+  /* =======================================================================
+     VYKRESLENÍ
+     ===================================================================== */
   function draw() {
+    ctx.save();
+    if (shakeMag > 0.5) ctx.translate(rand(-shakeMag, shakeMag), rand(-shakeMag, shakeMag));
     drawHalfBg(lanes[0], true);
     drawHalfBg(lanes[1], false);
     drawDivider();
-    lanes.forEach((lane, i) => drawLane(lane, i));
+    lanes.forEach((lane) => drawLane(lane));
     drawParticles();
+    ctx.restore();
   }
 
   function drawHalfBg(lane, isTop) {
     const top = lane.regionTop, h = lane.regionBottom - lane.regionTop;
+    const hue = (isTop ? 275 : 225) + gameLevel * 24;     // barva se posouvá s úrovní
     const g = ctx.createLinearGradient(0, top, 0, top + h);
-    g.addColorStop(0, isTop ? '#1a0a2e' : '#0b0420');
-    g.addColorStop(1, isTop ? '#0b0420' : '#0a1430');
+    g.addColorStop(0, `hsl(${hue}, 70%, ${isTop ? 12 : 8}%)`);
+    g.addColorStop(1, `hsl(${hue + 20}, 75%, 6%)`);
     ctx.fillStyle = g; ctx.fillRect(0, top, W, h);
 
     ctx.save();
@@ -377,34 +497,50 @@
     ctx.fillRect(0, mid - 2, W, 4); ctx.shadowBlur = 0;
   }
 
-  function drawLane(lane, i) {
-    // Podlaha (pod hráčem)
+  function drawLane(lane) {
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
     ctx.fillRect(0, lane.groundY, W, lane.regionBottom - lane.groundY);
     ctx.fillStyle = lane.colors.core; ctx.shadowColor = lane.colors.glow; ctx.shadowBlur = 14;
     ctx.fillRect(0, lane.groundY - 2, W, 4); ctx.shadowBlur = 0;
 
-    // Překážky
     const cam = lane.worldDist;
+    // mince
+    for (let idx = 0; idx < field.coins.length; idx++) {
+      const c = field.coins[idx];
+      const cx = c.x - cam;
+      if (cx < -20) continue;
+      if (cx > W + 20) break;
+      const isLocal = (mode !== 'online') || (lane === lanes[localIdx]);
+      if (isLocal && lane.coinsGot.has(idx)) continue;
+      drawCoin(cx, lane.groundY - c.h - COIN_R - 6);
+    }
+    // překážky
     for (const g of field.groups) {
       const gx = g.x - cam;
       if (gx + g.count * SPIKE_W < -20) continue;
       if (gx > W + 20) break;
-      for (let k = 0; k < g.count; k++) drawSpike(lane, gx + k * SPIKE_W);
+      for (let k = 0; k < g.count; k++) drawSpike(lane, gx + k * SPIKE_W, g.h || SPIKE_H);
     }
-
     if (lane.alive) drawPlayer(lane);
   }
 
-  function drawSpike(lane, ox) {
+  function drawCoin(x, y) {
+    const t = performance.now() / 200;
+    const w = Math.abs(Math.cos(t)) * COIN_R + 2;      // rotace mince
+    ctx.save();
+    ctx.fillStyle = '#ffe14d'; ctx.strokeStyle = '#fff6c2'; ctx.lineWidth = 2;
+    ctx.shadowColor = '#ffe14d'; ctx.shadowBlur = 14;
+    ctx.beginPath(); ctx.ellipse(x, y, w, COIN_R, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawSpike(lane, ox, h) {
     const cx = ox + SPIKE_W / 2;
     ctx.save();
     ctx.fillStyle = lane.colors.core; ctx.strokeStyle = lane.colors.glow; ctx.lineWidth = 2;
     ctx.shadowColor = lane.colors.glow; ctx.shadowBlur = 12;
     ctx.beginPath();
-    ctx.moveTo(ox, lane.groundY);
-    ctx.lineTo(cx, lane.groundY - SPIKE_H);
-    ctx.lineTo(ox + SPIKE_W, lane.groundY);
+    ctx.moveTo(ox, lane.groundY); ctx.lineTo(cx, lane.groundY - h); ctx.lineTo(ox + SPIKE_W, lane.groundY);
     ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.restore();
   }
@@ -436,16 +572,14 @@
   }
 
   function roundRect(x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
+    ctx.beginPath(); ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
   }
 
-  // ===== HUD =====
+  /* =======================================================================
+     HUD / BANNER / ODPOČET
+     ===================================================================== */
   function updateScores() {
     scoreTopEl.textContent = Math.floor(lanes[0].score);
     scoreBotEl.textContent = Math.floor(lanes[1].score);
@@ -460,13 +594,12 @@
     }
   }
   function showHud(on) { hudTop.classList.toggle('hidden', !on); hudBottom.classList.toggle('hidden', !on); }
-
-  // ===== Odpočet a smyčka =====
-  function startCountdown() {
-    state = 'countdown';
-    countdownNum = 3; countdownTimer = 0;
-    showCountdown('3');
+  function showBanner(text) {
+    bannerEl.textContent = text;
+    bannerEl.classList.remove('show'); void bannerEl.offsetWidth; bannerEl.classList.add('show');
   }
+
+  function startCountdown() { state = 'countdown'; countdownNum = 3; countdownTimer = 0; showCountdown('3'); sfx.count(); }
   function showCountdown(text) {
     countdownEl.textContent = text;
     countdownEl.classList.remove('show'); void countdownEl.offsetWidth; countdownEl.classList.add('show');
@@ -475,101 +608,159 @@
   function loop(t) {
     const dt = Math.min((t - lastTime) / 1000 || 0, 0.05);
     lastTime = t;
-
     if (state === 'countdown') {
       countdownTimer += dt;
       if (countdownTimer >= 0.8) {
         countdownTimer = 0; countdownNum--;
-        if (countdownNum > 0) showCountdown(String(countdownNum));
-        else if (countdownNum === 0) showCountdown('START!');
-        else { state = 'playing'; countdownEl.classList.remove('show'); }
+        if (countdownNum > 0) { showCountdown(String(countdownNum)); sfx.count(); }
+        else if (countdownNum === 0) { showCountdown('START!'); sfx.go(); }
+        else { state = 'playing'; countdownEl.classList.remove('show'); startMusic(); }
       }
     }
-
     update(dt);
     updateParticles(dt);
     if (mode) draw();
-
     requestAnimationFrame(loop);
   }
 
-  // ===== Obrazovky =====
+  /* =======================================================================
+     OBRAZOVKY
+     ===================================================================== */
   function show(el, on) { el.classList.toggle('hidden', !on); }
-  function hideAllScreens() {
-    show(screenMenu, false); show(screenHost, false); show(screenJoin, false); show(overlay, false);
-  }
+  function hideAllScreens() { show(screenMenu, false); show(screenHost, false); show(screenJoin, false); show(overlay, false); }
   function gotoMenu() {
     state = 'menu'; mode = null;
-    closeNet();
-    showHud(false);
-    hideAllScreens();
-    show(screenMenu, true);
+    stopMusic(); closeNet();
+    showHud(false); hideAllScreens(); show(screenMenu, true);
   }
 
-  // ===== Síť (klient) =====
-  function netSend(obj) { if (net && net.readyState === 1) net.send(JSON.stringify(obj)); }
-  function closeNet() { if (net) { try { net.onclose = null; net.close(); } catch (_) {} net = null; } }
+  /* =======================================================================
+     SÍŤ — PeerJS (WebRTC), bez vlastního serveru
+     ===================================================================== */
+  function peerErrMsg(err) {
+    const t = err && err.type;
+    if (t === 'peer-unavailable') return 'Hra s tímto kódem neexistuje.';
+    if (t === 'unavailable-id')   return 'Kód je obsazený, zkus to znovu.';
+    if (t === 'browser-incompatible') return 'Tento prohlížeč nepodporuje WebRTC.';
+    if (t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed')
+      return 'Nelze se spojit s propojovací službou (zkontroluj internet).';
+    return 'Spojení selhalo.';
+  }
+  function netSend(obj) { if (conn && conn.open) { try { conn.send(obj); } catch (_) {} } }
+  function closeNet() {
+    try { if (conn) conn.close(); } catch (_) {}
+    try { if (peer) peer.destroy(); } catch (_) {}
+    conn = null; peer = null;
+  }
+  function bindConn(c) {
+    conn = c;
+    c.on('data', (d) => handleNet(d));
+    c.on('close', () => onPeerLeft());
+    c.on('error', () => {});
+  }
 
-  function connect(onReady, onFail) {
-    if (location.protocol === 'file:') {     // otevřeno přes dvojklik → server není
-      onFail('Online hra potřebuje spuštěný server (node server.js), ne otevření souboru.');
-      return;
-    }
+  function hostGame() {
+    if (!window.Peer) { hostStatus.textContent = '⚠ Online vyžaduje připojení k internetu (PeerJS se nenačetlo).'; return; }
+    hideAllScreens(); show(screenHost, true);
+    hostCodeEl.textContent = '······';
+    hostStatus.textContent = '⏳ Připojuji se…';
+    closeNet(); hostTries = 0; tryHost();
+  }
+  function tryHost() {
+    const code = genCode();
+    peer = new Peer(PEER_PREFIX + code, { debug: 0 });
+    peer.on('open', () => {
+      role = 'host';
+      hostCodeEl.textContent = code;
+      hostStatus.textContent = '⏳ Čekání na druhého hráče…';
+    });
+    peer.on('connection', (c) => {
+      if (conn) { try { c.close(); } catch (_) {} return; }
+      bindConn(c);
+      c.on('open', () => {
+        const seed = randSeed();
+        netSend({ t: 'start', seed });
+        startGame('online', seed, 'host');
+      });
+    });
+    peer.on('error', (err) => {
+      if (err.type === 'unavailable-id' && hostTries < 5) {
+        hostTries++; try { peer.destroy(); } catch (_) {}
+        tryHost();
+      } else if (state !== 'playing') {
+        hostStatus.textContent = '⚠ ' + peerErrMsg(err);
+      }
+    });
+  }
+
+  function joinGame(code) {
+    if (!window.Peer) { joinError.textContent = 'Online vyžaduje připojení k internetu (PeerJS se nenačetlo).'; return; }
+    joinError.textContent = '⏳ Připojuji…';
     closeNet();
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    try { net = new WebSocket(proto + '://' + location.host); }
-    catch (e) { onFail('Nepodařilo se připojit k serveru.'); return; }
-    net.onopen = () => onReady();
-    net.onerror = () => onFail('Spojení se serverem selhalo.');
-    net.onclose = () => { if (mode === 'online' || state === 'menu') { /* řešeno jinde */ } };
-    net.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } handleNet(m); };
+    peer = new Peer({ debug: 0 });
+    peer.on('open', () => {
+      const c = peer.connect(PEER_PREFIX + code, { reliable: true });
+      bindConn(c);
+      c.on('open', () => { role = 'guest'; joinError.textContent = '✓ Spojeno, čekání na start…'; });
+    });
+    peer.on('error', (err) => {
+      if (state !== 'playing') joinError.textContent = peerErrMsg(err);
+    });
   }
 
   function handleNet(m) {
+    if (!m || typeof m !== 'object') return;
     switch (m.t) {
-      case 'created':
-        role = 'host';
-        hostCodeEl.textContent = m.code;
-        hostStatus.textContent = '⏳ Čekání na druhého hráče…';
-        break;
       case 'start':
-        role = m.role;
-        startGame('online', m.seed);
+        startGame('online', m.seed, role || 'guest');
         break;
-      case 'peer': {
+      case 'state': {
         const s = m.s;
         remoteTarget = { y: s[0], worldDist: s[1], alive: s[2] === 1, score: s[3], rot: s[4] };
         if (state === 'over') { lanes[remoteIdx].alive = remoteTarget.alive; lanes[remoteIdx].score = remoteTarget.score; }
         break;
       }
-      case 'peer_rematch':
+      case 'rematch':
+        rematchRemote = true;
         if (state === 'over') overlayHint.innerHTML = 'Soupeř chce odvetu — stiskni <b>MEZERNÍK</b>';
+        maybeRestart();
         break;
-      case 'peer_left':
-        if (mode === 'online') {
-          showCountdown('');
-          alert('Soupeř se odpojil.');
-        }
-        gotoMenu();
-        break;
-      case 'error':
-        joinError.textContent = m.msg || 'Chyba.';
+      case 'left':
+        onPeerLeft();
         break;
     }
   }
 
   function requestRematch() {
     if (mode !== 'online' || state !== 'over') return;
+    rematchLocal = true;
     netSend({ t: 'rematch' });
     overlayHint.innerHTML = '⏳ Čekání na soupeře…';
+    maybeRestart();
+  }
+  function maybeRestart() {
+    // o restartu rozhoduje hostitel, aby vzniklo jedno společné semínko
+    if (role === 'host' && rematchLocal && rematchRemote) {
+      const seed = randSeed();
+      netSend({ t: 'start', seed });
+      startGame('online', seed, 'host');
+    }
+  }
+  function onPeerLeft() {
+    if (mode === 'online' || state !== 'menu') {
+      countdownEl.classList.remove('show');
+      setTimeout(() => alert('Soupeř se odpojil.'), 10);
+    }
+    gotoMenu();
   }
 
-  // ===== Vstupy =====
+  /* =======================================================================
+     VSTUPY
+     ===================================================================== */
   function onKey(e) {
     if (e.repeat) return;
     const k = e.key;
     const isJump = (k === ' ' || k === 'ArrowUp' || k === 'w' || k === 'W' || k === 'Enter');
-
     if (mode === 'online') {
       if (state === 'playing' && isJump) { e.preventDefault(); jump(localIdx); }
       else if (state === 'over' && (k === ' ' || k === 'Enter')) { e.preventDefault(); requestRematch(); }
@@ -581,7 +772,6 @@
       if (k === 'ArrowUp') { e.preventDefault(); jump(1); }
     }
   }
-
   function onPointer(e) {
     if (state === 'menu') return;
     if (mode === 'online') {
@@ -595,43 +785,33 @@
     }
   }
 
-  // ===== Menu akce =====
   function onMenuClick(act) {
-    if (act === 'local') {
-      startGame('local');
-    } else if (act === 'host') {
-      hideAllScreens(); show(screenHost, true);
-      hostCodeEl.textContent = '······';
-      hostStatus.textContent = '⏳ Připojuji se k serveru…';
-      connect(() => netSend({ t: 'create' }),
-              (msg) => { hostStatus.textContent = '⚠ ' + msg; });
-    } else if (act === 'join') {
+    ensureAudio();
+    if (act === 'local') startGame('local');
+    else if (act === 'host') hostGame();
+    else if (act === 'join') {
       hideAllScreens(); show(screenJoin, true);
       joinError.textContent = ''; joinInput.value = '';
       setTimeout(() => joinInput.focus(), 50);
     } else if (act === 'connect') {
       const code = joinInput.value.toUpperCase().trim();
-      if (code.length !== 6) { joinError.textContent = 'Kód má 4 písmena a 2 číslice (např. ABCD12).'; return; }
-      joinError.textContent = 'Připojuji…';
-      connect(() => netSend({ t: 'join', code }),
-              (msg) => { joinError.textContent = msg; });
-    } else if (act === 'back') {
-      gotoMenu();
-    }
+      if (!/^[A-Z]{4}[0-9]{2}$/.test(code)) { joinError.textContent = 'Kód má 4 písmena a 2 číslice (např. ABCD12).'; return; }
+      joinGame(code);
+    } else if (act === 'back') gotoMenu();
   }
 
-  // ===== Inicializace =====
+  /* =======================================================================
+     INICIALIZACE
+     ===================================================================== */
   window.addEventListener('resize', resize);
   window.addEventListener('keydown', onKey);
   canvas.addEventListener('pointerdown', onPointer);
-  overlay.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('[data-act]')) return;   // tlačítko Menu řeší klik níže
-    onPointer(e);
-  });
+  overlay.addEventListener('pointerdown', (e) => { if (e.target.closest('[data-act]')) return; onPointer(e); });
   document.querySelectorAll('[data-act]').forEach(el => {
     el.addEventListener('click', (e) => { e.stopPropagation(); onMenuClick(el.dataset.act); });
   });
   joinInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') onMenuClick('connect'); });
+  muteBtn.addEventListener('click', (e) => { e.stopPropagation(); ensureAudio(); setMuted(!muted); });
 
   resize();
   buildLanes(false);

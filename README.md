@@ -32,42 +32,41 @@ začne, až o odvetu požádají oba.
 
 ## Spuštění
 
-### Jen hra na jednom zařízení (bez serveru)
-Stačí otevřít `index.html` v prohlížeči (dvojklik). Online režim takto
-nefunguje — k tomu je potřeba server (viz níže).
+Online režim funguje přes **PeerJS (WebRTC)** — dvě zařízení se propojí
+**napřímo, bez vlastního serveru**. Stačí tedy statický hosting a internet.
 
-### S online režimem (potřebný Node.js)
+### Nejjednodušeji
+Otevři `index.html` v prohlížeči, nebo nahraj soubory na libovolný statický
+hosting (**GitHub Pages**, Netlify, Vercel…). Online i lokální režim fungují.
+> Pozn.: online potřebuje připojení k internetu (propojovací služba PeerJS).
+> Pokud soubor otevřeš přes `file://` na obou zařízeních bez internetu,
+> funguje jen lokální hra na jednom zařízení.
+
+### Online na dvou zařízeních
+Jeden hráč zvolí **„Začít novou hru online"** → dostane kód (např. `ABCD12`),
+druhý zvolí **„Připojit se"** a kód zadá. Funguje to mezi libovolnými
+zařízeními s internetem (nemusí být na stejné WiFi).
+
+### Volitelně: lokální server
+Pro pohodlné lokální testování (servíruje soubory přes `http://`):
 ```bash
-node server.js
-# nebo:  npm start
+node server.js     # nebo: npm start  →  http://localhost:8000
 ```
-Pak otevři `http://localhost:8000`.
-
-**Hra po síti (stejná WiFi):** na druhém zařízení otevři
-`http://<IP-adresa-počítače-se-serverem>:8000` (např. `http://192.168.0.10:8000`),
-jeden hráč zvolí „Začít novou hru online", druhý „Připojit se" a zadá kód.
-
-**Hra přes internet:** nasaď `server.js` na libovolný Node hosting
-(Render, Railway, Fly.io, Glitch…). Server zároveň hostuje i samotnou hru,
-takže veřejná adresa funguje rovnou jako odkaz pro oba hráče.
-> Pozn.: GitHub Pages umí jen statické soubory, **server na něm spustit nelze** —
-> proto online režim na Pages fungovat nebude (lokální hra ano).
-
-Server běží bez instalace balíčků (čistý Node, vlastní minimalistický WebSocket),
-jen potřebuje **Node.js ≥ 16**.
+Server není pro online nutný (to řeší PeerJS), jen usnadňuje místní spuštění.
 
 ## Struktura
 
-- `index.html` — stránka, menu a HUD
+- `index.html` — stránka, menu a HUD (+ PeerJS z CDN)
 - `style.css` — vzhled, menu, animace
-- `game.js` — herní logika (fyzika, deterministické překážky, obtížnost, částice, síťový klient)
-- `server.js` — HTTP server + WebSocket pro propojení hráčů přes kód místnosti
+- `game.js` — herní logika (fyzika, deterministické překážky/mince, úrovně, zvuky, částice, PeerJS klient)
+- `server.js` — volitelný statický server pro lokální spuštění
 - `package.json` — `npm start`
 
 ## Vlastnosti
 
-- Dva režimy: lokální (2 hráči) i online (kód místnosti) ze stejného kódu
-- Stejné překážky pro oba hráče (deterministické dle semínka) → férový reflexní závod
-- Postupně rostoucí náročnost (rychlost i hustota překážek)
-- Částicové efekty (stopa, obláček při skoku/dopadu, exploze), rotující neonová kostka
+- Dva režimy: lokální (2 hráči) i online (kód místnosti, bez serveru přes WebRTC)
+- Stejné překážky i mince pro oba hráče (deterministické dle semínka) → férový reflexní závod
+- Postupně rostoucí náročnost: rychlost, hustota i výška překážek; úrovně s nápisem
+- **Mince** k sbírání (risk/odměna), **zvuky** (skok, mince, náraz, odpočet, výhra) + jemná hudba, tlačítko ztlumení 🔊
+- Efekty: otřes obrazovky při nárazu, barevně se měnící pozadí, částice, rotující neonová kostka
 - Funguje na klávesnici i dotykově
