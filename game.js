@@ -49,6 +49,7 @@
   const START_SPEED  = 430;        // rychlejší start
   const MAX_SPEED    = 1000;
   const SPEED_BYDIST = 0.052;
+  const JUMP_APEX    = (JUMP_V * JUMP_V) / (2 * GRAVITY);   // výška vrcholu skoku (~156 px)
   const SPIKE_W      = 34;
   const SPIKE_H      = 42;
   const ITEM_R       = 13;
@@ -245,15 +246,21 @@
           const tall = this.prng() < 0.20 && dist > 1100;
           this.groups.push({ x, count, h: tall ? SPIKE_H * 1.5 : SPIKE_H });
 
-          // položka v mezeře před skupinou
+          // POLOŽKY — umístěné bezpečně, nikdy ne do cesty bodce:
+          //  • mince nad překážkou v oblouku skoku (sebereš ji přeskokem bodce)
+          //  • mince/náboj/power-up na zemi DOPROSTŘED mezery (sebereš během běhu)
+          const gapMid = (prevEnd + x) / 2;
+          const clusterMid = x + count * SPIKE_W / 2;
           const ri = this.prng();
-          if (ri < 0.42) {
-            this.items.push({ x: (prevEnd + x) / 2, h: this.prng() < 0.5 ? 90 : 0, kind: 'coin' });
-          } else if (ri < 0.56) {
-            this.items.push({ x: (prevEnd + x) / 2, h: 80, kind: 'charge' });
+          if (ri < 0.26) {
+            this.items.push({ x: gapMid, h: 0, kind: 'coin' });                 // mince na zemi v mezeře
+          } else if (ri < 0.46) {
+            this.items.push({ x: clusterMid, h: JUMP_APEX - 12, kind: 'coin' }); // mince nad bodcem (na oblouku skoku)
+          } else if (ri < 0.58) {
+            this.items.push({ x: gapMid, h: 0, kind: 'charge' });               // náboj — bezpečně na zemi
           } else if (ri < 0.66) {
             const types = ['shield', 'slow', 'magnet'];
-            this.items.push({ x: (prevEnd + x) / 2, h: 80, kind: types[(this.prng() * 3) | 0] });
+            this.items.push({ x: gapMid, h: 0, kind: types[(this.prng() * 3) | 0] }); // power-up — bezpečně na zemi
           }
           this.lastX = x + count * SPIKE_W;
         }
