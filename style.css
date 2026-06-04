@@ -48,7 +48,37 @@ html, body {
 }
 .hud-bottom .hud-score { margin-left: 0; margin-right: auto; }
 .hud-key   { font-size: 12px; opacity: 0.55; font-weight: 600; }
+.hud-power { font-size: 18px; letter-spacing: 2px; }
 .hud.hidden { display: none; }
+
+/* Tlačítko speciálu */
+#special-btn {
+  position: absolute;
+  left: 50%; bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 20;
+  padding: 12px 22px;
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #1a0010;
+  background: linear-gradient(100deg, #ffe14d, #ff9b3c);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  box-shadow: 0 0 24px rgba(255,225,77,0.6);
+  animation: pulse 1s ease-in-out infinite;
+}
+#special-btn.hidden { display: none; }
+
+.overlay-score {
+  font-size: clamp(16px, 3vw, 24px);
+  font-weight: 800;
+  letter-spacing: 1px;
+  padding: 8px 18px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.08);
+}
 
 /* ---------- Sdílené obrazovky (menu / host / join / konec) ---------- */
 .screen, .overlay {

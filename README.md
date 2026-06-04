@@ -18,17 +18,27 @@ postupně rostou, takže běh dřív nebo později skončí.
 ## Ovládání
 
 ### Na jednom zařízení
-| Hráč | Polovina | Klávesa | Dotyk |
-|------|----------|---------|-------|
-| **Hráč 1** | horní | `W` | klepnutí v horní polovině |
-| **Hráč 2** | dolní | šipka `↑` | klepnutí v dolní polovině |
+| Hráč | Polovina | Skok | Speciál (zničit překážky) | Dotyk |
+|------|----------|------|---------------------------|-------|
+| **Hráč 1** | horní | `W` | `D` | klepnutí v horní polovině |
+| **Hráč 2** | dolní | šipka `↑` | šipka `→` | klepnutí v dolní polovině |
 
 Odveta po konci: **MEZERNÍK** (nebo klepnutí).
 
 ### Online (každý na svém zařízení)
-Skok: **MEZERNÍK / šipka ↑ / W** nebo **klepnutí kamkoli**. Na svém zařízení
-hraješ vždy spodní postavu, soupeře vidíš nahoře. Odveta: **MEZERNÍK** — kolo
-začne, až o odvetu požádají oba.
+Skok: **MEZERNÍK / šipka ↑ / W** nebo **klepnutí kamkoli**. Speciál: **`D` / šipka `→`**
+nebo tlačítko **⚡ ZNIČIT**. Na svém zařízení hraješ vždy spodní postavu, soupeře
+vidíš nahoře. Odveta: **MEZERNÍK** — kolo začne, až o odvetu požádají oba.
+
+## Mince, power-upy a speciál
+
+- 🪙 **Mince** — +15 bodů
+- ⚡ **Náboj** — naplní speciál; klávesou `D` / `→` (nebo tlačítkem) **zničíš překážky před sebou** (max 3 náboje)
+- 🛡️ **Štít** — přežiješ jeden náraz
+- ⏱️ **Zpomalení** — na chvíli zpomalí tvoji dráhu
+- 🧲 **Magnet** — chvíli přitahuje mince
+
+Počítadlo vítězství drží stav přes všechny odvety (`HRÁČ 1  2 : 1  HRÁČ 2`).
 
 ## Spuštění
 
@@ -66,7 +76,9 @@ Server není pro online nutný (to řeší PeerJS), jen usnadňuje místní spu�
 
 - Dva režimy: lokální (2 hráči) i online (kód místnosti, bez serveru přes WebRTC)
 - Stejné překážky i mince pro oba hráče (deterministické dle semínka) → férový reflexní závod
-- Postupně rostoucí náročnost: rychlost, hustota i výška překážek; úrovně s nápisem
-- **Mince** k sbírání (risk/odměna), **zvuky** (skok, mince, náraz, odpočet, výhra) + jemná hudba, tlačítko ztlumení 🔊
-- Efekty: otřes obrazovky při nárazu, barevně se měnící pozadí, částice, rotující neonová kostka
+- Vyšší obtížnost od začátku + postupně rostoucí náročnost (rychlost, hustota i výška překážek); úrovně s nápisem
+- **Mince a power-upy** (štít, zpomalení, magnet) a **speciál** na ničení překážek za náboje
+- **Počítadlo vítězství** přes odvety
+- **Zvuky** (skok, mince, power-up, náraz, odpočet, výhra) + jemná hudba, tlačítko ztlumení 🔊
+- Efekty: otřes obrazovky při nárazu, záblesk při speciálu, barevně se měnící pozadí, částice, rotující neonová kostka
 - Funguje na klávesnici i dotykově

@@ -19,14 +19,19 @@
     <!-- Skóre nahoře/dole -->
     <div class="hud hud-top" id="hud-top">
       <span class="hud-name" id="name-top">HRÁČ&nbsp;1</span>
+      <span class="hud-power" id="power-top"></span>
       <span class="hud-score" id="score-top">0</span>
       <span class="hud-key" id="key-top">klávesa&nbsp;W</span>
     </div>
     <div class="hud hud-bottom" id="hud-bottom">
       <span class="hud-name" id="name-bottom">HRÁČ&nbsp;2</span>
+      <span class="hud-power" id="power-bottom"></span>
       <span class="hud-score" id="score-bottom">0</span>
       <span class="hud-key" id="key-bottom">šipka&nbsp;↑</span>
     </div>
+
+    <!-- Tlačítko speciálu (online / dotyk) -->
+    <button id="special-btn" class="hidden">⚡ ZNIČIT</button>
 
     <!-- ====== HLAVNÍ MENU ====== -->
     <section class="screen" id="screen-menu">
@@ -64,6 +69,7 @@
     <!-- ====== Herní překryv (start / konec) ====== -->
     <div class="overlay hidden" id="overlay">
       <p class="subtitle" id="overlay-text"></p>
+      <p class="overlay-score" id="overlay-score"></p>
       <div class="hint" id="overlay-hint"></div>
       <button class="btn btn-ghost small overlay-menu" data-act="back">← Menu</button>
     </div>
